@@ -1,0 +1,187 @@
+// 3D FIGHTING GAME - BASIC COMBAT SCRIPT
+// Controls: WASD / Arrow keys = Move
+// J = Punch, K = Kick
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x171b2b);
+
+const camera = new THREE.PerspectiveCamera(
+  70, window.innerWidth / window.innerHeight, 0.1, 1000
+);
+camera.position.set(0, 5, 10);
+camera.lookAt(0, 1, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x303050, 2));
+
+const light = new THREE.DirectionalLight(0xffffff, 2);
+light.position.set(4, 8, 5);
+scene.add(light);
+
+// Arena
+const floor = new THREE.Mesh(
+  new THREE.BoxGeometry(14, 0.3, 10),
+  new THREE.MeshStandardMaterial({ color: 0x303747 })
+);
+floor.position.y = -0.2;
+scene.add(floor);
+
+// Fighter creation
+function makeFighter(color, x) {
+  const group = new THREE.Group();
+  scene.add(group);
+  group.position.set(x, 0, 0);
+
+  const material = new THREE.MeshStandardMaterial({ color });
+
+  function part(w, h, d, px, py, pz) {
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d), material
+    );
+    mesh.position.set(px, py, pz);
+    group.add(mesh);
+    return mesh;
+  }
+
+  part(0.7, 1, 0.4, 0, 1.5, 0); // body
+
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.3, 16, 16),
+    new THREE.MeshStandardMaterial({ color: 0xe6b58d })
+  );
+  head.position.y = 2.25;
+  group.add(head);
+
+  const leftArm = part(0.22, 0.8, 0.22, -0.55, 1.55, 0);
+  const rightArm = part(0.22, 0.8, 0.22, 0.55, 1.55, 0);
+  const leftLeg = part(0.28, 0.8, 0.28, -0.22, 0.45, 0);
+  const rightLeg = part(0.28, 0.8, 0.28, 0.22, 0.45, 0);
+
+  return {
+    group, leftArm, rightArm, leftLeg, rightLeg,
+    hp: 100, attack: false, attackTime: 0
+  };
+}
+
+const player = makeFighter(0x168cff, -2);
+const enemy = makeFighter(0xff3030, 2);
+
+// Health bars
+const hud = document.createElement("div");
+hud.style.cssText =
+  "position:fixed;top:12px;left:10px;right:10px;color:white;" +
+  "font:bold 18px Arial;display:flex;justify-content:space-between;" +
+  "pointer-events:none";
+hud.innerHTML =
+  '<span>PLAYER <b id="hp1">100</b>%</span>' +
+  '<span>ENEMY <b id="hp2">100</b>%</span>';
+document.body.appendChild(hud);
+
+const keys = {};
+window.addEventListener("keydown", e => {
+  keys[e.key.toLowerCase()] = true;
+
+  if (e.repeat) return;
+  if (e.key.toLowerCase() === "j") attack(player, enemy, "punch");
+  if (e.key.toLowerCase() === "k") attack(player, enemy, "kick");
+});
+window.addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+function attack(attacker, target, type) {
+  if (attacker.hp <= 0 || target.hp <= 0) return;
+  if (attacker.attack) return;
+
+  attacker.attack = true;
+  attacker.attackTime = 0.25;
+
+  const distance = Math.abs(
+    attacker.group.position.x - target.group.position.x
+  );
+
+  // Only hit when fighters are close
+  if (distance < 2.2) {
+    target.hp = Math.max(
+      0, target.hp - (type === "kick" ? 15 : 10)
+    );
+    document.getElementById(
+      target === enemy ? "hp2" : "hp1"
+    ).textContent = target.hp;
+  }
+}
+
+function moveFighter(f, dx, dz) {
+  f.group.position.x = Math.max(
+    -5.5, Math.min(5.5, f.group.position.x + dx)
+  );
+  f.group.position.z = Math.max(
+    -3.5, Math.min(3.5, f.group.position.z + dz)
+  );
+}
+
+// Simple enemy AI
+let lastAI = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = 1 / 60;
+
+  if (keys["a"] || keys["arrowleft"]) moveFighter(player, -0.08, 0);
+  if (keys["d"] || keys["arrowright"]) moveFighter(player, 0.08, 0);
+  if (keys["w"] || keys["arrowup"]) moveFighter(player, 0, -0.08);
+  if (keys["s"] || keys["arrowdown"]) moveFighter(player, 0, 0.08);
+
+  // Face opponent
+  player.group.rotation.y =
+    player.group.position.x < enemy.group.position.x ? 0 : Math.PI;
+  enemy.group.rotation.y =
+    enemy.group.position.x > player.group.position.x ? Math.PI : 0;
+
+  // Enemy approaches and attacks
+  lastAI += dt;
+  const dx = player.group.position.x - enemy.group.position.x;
+  const dz = player.group.position.z - enemy.group.position.z;
+  const dist = Math.hypot(dx, dz);
+
+  if (enemy.hp > 0 && player.hp > 0) {
+    if (dist > 1.5) {
+      moveFighter(enemy, dx / Math.max(dist, 0.01) * 0.025,
+        dz / Math.max(dist, 0.01) * 0.025);
+    } else if (lastAI > 1.2) {
+      attack(enemy, player, "punch");
+      lastAI = 0;
+    }
+  }
+
+  for (const f of [player, enemy]) {
+    if (f.attack) {
+      f.attackTime -= dt;
+      f.rightArm.rotation.x = -1.2;
+      if (f.attackTime <= 0) {
+        f.attack = false;
+        f.rightArm.rotation.x = 0;
+      }
+    }
+  }
+
+  if (player.hp <= 0 || enemy.hp <= 0) {
+    hud.innerHTML = player.hp <= 0
+      ? "FIGHT OVER — ENEMY WINS!"
+      : "FIGHT OVER — PLAYER WINS!";
+  }
+
+  renderer.render(scene, camera);
+}
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+animate();
